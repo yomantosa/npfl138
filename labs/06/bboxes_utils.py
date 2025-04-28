@@ -67,7 +67,23 @@ def bboxes_to_rcnn(anchors: torch.Tensor, bboxes: torch.Tensor) -> torch.Tensor:
     the output shape is `[anchors_len, 4]`.
     """
     # TODO: Implement according to the docstring.
-    raise NotImplementedError()
+    # raise NotImplementedError()
+    anchor_height = anchors[..., BOTTOM] - anchors[..., TOP]
+    anchor_width = anchors[..., RIGHT] - anchors[..., LEFT]
+    anchor_y_center = (anchors[..., TOP] + anchors[..., BOTTOM]) / 2
+    anchor_x_center = (anchors[..., LEFT] + anchors[..., RIGHT]) / 2
+
+    bbox_height = bboxes[..., BOTTOM] - bboxes[..., TOP]
+    bbox_width = bboxes[..., RIGHT] - bboxes[..., LEFT]
+    bbox_y_center = (bboxes[..., TOP] + bboxes[..., BOTTOM]) / 2
+    bbox_x_center = (bboxes[..., LEFT] + bboxes[..., RIGHT]) / 2
+
+    dy = (bbox_y_center - anchor_y_center) / anchor_height
+    dx = (bbox_x_center - anchor_x_center) / anchor_width
+    dh = torch.log(bbox_height / anchor_height)
+    dw = torch.log(bbox_width / anchor_width)
+
+    return torch.stack([dy, dx, dh, dw], dim=-1)
 
 
 def bboxes_from_rcnn(anchors: torch.Tensor, rcnns: torch.Tensor) -> torch.Tensor:
@@ -77,7 +93,25 @@ def bboxes_from_rcnn(anchors: torch.Tensor, rcnns: torch.Tensor) -> torch.Tensor
     the output shape is `[anchors_len, 4]`.
     """
     # TODO: Implement according to the docstring.
-    raise NotImplementedError()
+    # raise NotImplementedError()
+    anchor_height = anchors[..., BOTTOM] - anchors[..., TOP]
+    anchor_width = anchors[..., RIGHT] - anchors[..., LEFT]
+    anchor_y_center = (anchors[..., TOP] + anchors[..., BOTTOM]) / 2
+    anchor_x_center = (anchors[..., LEFT] + anchors[..., RIGHT]) / 2
+
+    dy, dx, dh, dw = rcnns.unbind(-1)
+
+    bbox_y_center = dy * anchor_height + anchor_y_center
+    bbox_x_center = dx * anchor_width + anchor_x_center
+    bbox_height = torch.exp(dh) * anchor_height
+    bbox_width = torch.exp(dw) * anchor_width
+
+    top = bbox_y_center - bbox_height / 2
+    left = bbox_x_center - bbox_width / 2
+    bottom = bbox_y_center + bbox_height / 2
+    right = bbox_x_center + bbox_width / 2
+
+    return torch.stack([top, left, bottom, right], dim=-1)
 
 
 def bboxes_training(
@@ -116,14 +150,40 @@ def bboxes_training(
     # largest IoU (the anchor with smaller index if there are several). In case
     # several gold objects are assigned to a single anchor, use the gold object
     # with smaller index.
-
+    
     # TODO: For each unused anchor, find the gold object with the largest IoU
     # (again the gold object with smaller index if there are several), and if
     # the IoU is >= threshold, assign the object to the anchor.
 
-    anchor_classes, anchor_bboxes = ..., ...
+    # anchor_classes, anchor_bboxes = ..., ...
+
+    device = anchors.device  # Get the device of the input tensors
+    
+    num_anchors = anchors.shape[0]
+    ious = bboxes_iou(anchors[:, None], gold_bboxes[None])
+
+    anchor_classes = torch.zeros(num_anchors, dtype=torch.int64, device=device)
+    anchor_bboxes = torch.zeros((num_anchors, 4), dtype=torch.float32, device=device)
+    assigned = torch.full((num_anchors,), -1, dtype=torch.int64, device=device)
+
+    best_anchors = torch.argmax(ious, dim=0)
+    for gold_idx, anchor_idx in enumerate(best_anchors.tolist()):
+        if assigned[anchor_idx] == -1:
+            assigned[anchor_idx] = gold_idx
+
+    max_ious, best_gold = torch.max(ious, dim=1)
+    unassigned = assigned == -1
+    mask = (max_ious >= iou_threshold) & unassigned
+    assigned[mask] = best_gold[mask]
+
+    assigned_mask = assigned != -1
+    assigned_indices = assigned[assigned_mask]
+
+    anchor_classes[assigned_mask] = 1 + gold_classes[assigned_indices]
+    anchor_bboxes[assigned_mask] = bboxes_to_rcnn(anchors[assigned_mask], gold_bboxes[assigned_indices])
 
     return anchor_classes, anchor_bboxes
+
 
 
 def main(args: argparse.Namespace) -> tuple[Callable, Callable, Callable]:

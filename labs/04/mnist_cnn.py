@@ -29,7 +29,14 @@ class Dataset(npfl138.TransformedDataset):
         label = example["label"]  # a torch.Tensor with a single integer representing the label
         return image, label  # return an (input, target) pair
 
+class ResidualBlock(torch.nn.Module):
+    def __init__(self, layers):
+        super().__init__()
+        self.block = torch.nn.Sequential(*layers)
 
+    def forward(self, x):
+        return x + self.block(x)
+    
 class Model(npfl138.TrainableModule):
     def __init__(self, args: argparse.Namespace) -> None:
         # TODO: Add CNN layers specified by `args.cnn`, which contains
@@ -70,7 +77,118 @@ class Model(npfl138.TrainableModule):
         # where the `self.eval()` is necessary to avoid the BatchNorms to update their running statistics.
 
         # TODO: Finally, add the final Linear output layer with `MNIST.LABELS` units.
-        ...
+        
+        super().__init__() 
+        
+        def parse_padding(p_str):
+            if p_str == "valid":
+                return 0
+            elif p_str == "same":
+                return "same"
+            else:
+                return int(p_str)
+
+        tokens = []
+        current = ""
+        depth = 0
+        for c in args.cnn:
+            if c == "[":
+                depth += 1
+                current += c
+            elif c == "]":
+                depth -= 1
+                current += c
+            elif c == "," and depth == 0:
+                tokens.append(current)
+                current = ""
+            else:
+                current += c
+        if current:
+            tokens.append(current)
+
+        layers = []
+
+        for token in tokens:
+            if token.startswith("C-"):
+                _, f, k, s, p = token.split("-")
+                layers.append(torch.nn.Sequential(
+                    torch.nn.LazyConv2d(int(f), int(k), int(s), parse_padding(p)),
+                    torch.nn.ReLU()
+                ))
+
+            elif token.startswith("CB-"):
+                _, f, k, s, p = token.split("-")
+                layers.append(torch.nn.Sequential(
+                    torch.nn.LazyConv2d(int(f), int(k), int(s), parse_padding(p), bias=False),
+                    torch.nn.BatchNorm2d(int(f)),
+                    torch.nn.ReLU()
+                ))
+
+            elif token.startswith("M-"):
+                _, k, s = token.split("-")
+                layers.append(torch.nn.MaxPool2d(kernel_size=int(k), stride=int(s)))
+
+            elif token.startswith("R-[") and token.endswith("]"):
+                inner_spec = token[3:-1]
+                inner_tokens = []
+                inner = ""
+                d = 0
+                for c in inner_spec:
+                    if c == "[":
+                        d += 1
+                        inner += c
+                    elif c == "]":
+                        d -= 1
+                        inner += c
+                    elif c == "," and d == 0:
+                        inner_tokens.append(inner)
+                        inner = ""
+                    else:
+                        inner += c
+                if inner:
+                    inner_tokens.append(inner)
+
+                inner_layers = []
+                for t in inner_tokens:
+                    if t.startswith("C-"):
+                        _, f, k, s, p = t.split("-")
+                        inner_layers.append(torch.nn.Sequential(
+                            torch.nn.LazyConv2d(int(f), int(k), int(s), parse_padding(p)),
+                            torch.nn.ReLU()
+                        ))
+                    elif t.startswith("CB-"):
+                        _, f, k, s, p = t.split("-")
+                        inner_layers.append(torch.nn.Sequential(
+                            torch.nn.LazyConv2d(int(f), int(k), int(s), parse_padding(p), bias=False),
+                            torch.nn.BatchNorm2d(int(f)),
+                            torch.nn.ReLU()
+                        ))
+                layers.append(ResidualBlock(inner_layers))
+
+            elif token == "F":
+                layers.append(torch.nn.Flatten())
+
+            elif token.startswith("H-"):
+                _, size = token.split("-")
+                layers.append(torch.nn.Sequential(
+                    torch.nn.LazyLinear(int(size)),
+                    torch.nn.ReLU()
+                ))
+
+            elif token.startswith("D-"):
+                _, rate = token.split("-")
+                layers.append(torch.nn.Dropout(float(rate)))
+
+        layers.append(torch.nn.LazyLinear(MNIST.LABELS))
+        self.model = torch.nn.Sequential(*layers)
+
+        self.eval()
+        with torch.no_grad():
+            dummy_input = torch.zeros(1, MNIST.C, MNIST.H, MNIST.W)
+            self.model(dummy_input)
+
+    def forward(self, x):
+        return self.model(x)
 
 
 def main(args: argparse.Namespace) -> dict[str, float]:

@@ -4,6 +4,7 @@ import datetime
 import os
 import re
 
+import numpy as np
 import torch
 import torchmetrics
 
@@ -15,12 +16,12 @@ from npfl138.datasets.uppercase_data import UppercaseData
 # `alphabet_size`, `batch_size`, `epochs`, and `window`.
 # Also, you can set the number of threads to 0 to use all your CPU cores.
 parser = argparse.ArgumentParser()
-parser.add_argument("--alphabet_size", default=..., type=int, help="If given, use this many most frequent chars.")
-parser.add_argument("--batch_size", default=..., type=int, help="Batch size.")
-parser.add_argument("--epochs", default=..., type=int, help="Number of epochs.")
+parser.add_argument("--alphabet_size", default=100, type=int, help="If given, use this many most frequent chars.")
+parser.add_argument("--batch_size", default=128, type=int, help="Batch size.")
+parser.add_argument("--epochs", default=10, type=int, help="Number of epochs.")
 parser.add_argument("--seed", default=42, type=int, help="Random seed.")
 parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
-parser.add_argument("--window", default=..., type=int, help="Window size to use.")
+parser.add_argument("--window", default=5, type=int, help="Window size to use.")
 
 
 class BatchGenerator:
@@ -66,12 +67,22 @@ class Model(npfl138.TrainableModule):
         # - Alternatively, you can experiment with `torch.nn.Embedding`s (an
         #   efficient implementation of one-hot encoding followed by a Dense layer)
         #   and flattening afterwards, or suitably using `torch.nn.EmbeddingBag`.
-        ...
+        embedding_dim = 32
+        self.embedding = torch.nn.Embedding(num_embeddings=args.alphabet_size, embedding_dim=embedding_dim)
+        self.fc = torch.nn.Sequential(
+            torch.nn.Linear(((2 * args.window + 1) * embedding_dim), 128),
+            torch.nn.ReLU(),
+            torch.nn.Linear(128, 2)
+        )
 
     def forward(self, windows: torch.Tensor) -> torch.Tensor:
         # TODO: Implement the forward pass.
-        ...
-
+        embedded = self.embedding(windows)
+        if embedded.dim() == 2:
+            embedded = embedded.unsqueeze(0)
+        batch_size = embedded.shape[0]
+        flattened = embedded.view(batch_size, -1)
+        return self.fc(flattened)
 
 def main(args: argparse.Namespace) -> None:
     # Set the random seed and the number of threads.
@@ -100,8 +111,14 @@ def main(args: argparse.Namespace) -> None:
 
     # TODO: Implement a suitable model, optionally including regularization, select
     # good hyperparameters, and train the model.
-    model = ...
+    model = Model(args)
+    model.configure(
+    optimizer=torch.optim.Adam(model.parameters(), lr=0.001),
+    loss=torch.nn.CrossEntropyLoss(),
+    metrics={"accuracy": torchmetrics.Accuracy(task="multiclass", num_classes=2)}
+    )
 
+    model.fit(train, dev=dev, epochs=args.epochs)
     # TODO: Generate correctly capitalized test set. Use `uppercase_data.test.text`
     # as input, capitalize suitable characters, and write the result to `predictions_file`
     # (which is by default `uppercase_test.txt` in the `args.logdir` directory).
@@ -109,8 +126,26 @@ def main(args: argparse.Namespace) -> None:
     with open(os.path.join(args.logdir, "uppercase_test.txt"), "w", encoding="utf-8") as predictions_file:
         # Get the test set predictions; if you modified the `test` dataloader or your model
         # does not process the dataset windows, you might need to adjust the following line.
-        predictions = model.predict(test, data_with_labels=True)
-        ...
+        test_text = list(uppercase_data.test.text)
+        char_index = 0
+        batch_num =0
+        
+        for input_batch in test:
+            input_data, _ = input_batch
+            prob = model.predict(input_data)
+            prob = torch.tensor(np.array(prob))
+            prob = torch.softmax(prob, dim=1)
+            uppercase_probs = prob[:, 1]
+            predicted_labels = ["U" if p >= 0.5 else "L" for p in uppercase_probs]
+            batch_num += 1
+            for j in range(len(predicted_labels)):
+                if char_index >= len(test_text):
+                    break
+                test_text[char_index] = test_text[char_index].upper() if predicted_labels[j] == "U" else test_text[char_index].lower()
+                char_index += 1
+                
+        predictions_file.write("".join(test_text))
+        print("done")
 
 
 if __name__ == "__main__":

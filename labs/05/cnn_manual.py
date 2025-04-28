@@ -45,7 +45,23 @@ class Convolution:
         # manually iterate through the individual pixels, batch examples,
         # input filters, or output filters. However, you can manually
         # iterate through the kernel size.
-        output = ...
+        
+        B, H, W, _ = inputs.shape
+        k = self._kernel_size
+        s = self._stride
+        F = self._filters
+
+        H_out = (H - k) // s + 1
+        W_out = (W - k) // s + 1
+
+        output = torch.zeros((B, H_out, W_out, F), dtype=inputs.dtype, device=inputs.device)
+
+        for i in range(k):
+            for j in range(k):
+                patch = inputs[:, i:i + s * H_out:s, j:j + s * W_out:s, :]
+                kernel_slice = self._kernel[i, j, :, :]
+                output += patch @ kernel_slice
+        output = torch.relu(output + self._bias)
 
         # If requested, verify that `output` contains a correct value.
         if self._verify:
@@ -65,8 +81,30 @@ class Convolution:
         # - the `inputs` layer,
         # - `self._kernel`,
         # - `self._bias`.
-        inputs_gradient, kernel_gradient, bias_gradient = ..., ..., ...
+        
+        _, H, W, _ = inputs.shape
+        k = self._kernel_size
+        s = self._stride
+        _ = self._filters
 
+        H_out = (H - k) // s + 1
+        W_out = (W - k) // s + 1
+
+        relu_mask = (outputs > 0).to(outputs_gradient.dtype)
+        d_out = outputs_gradient * relu_mask
+
+        kernel_gradient = torch.zeros_like(self._kernel)
+        bias_gradient = d_out.sum(dim=(0, 1, 2))
+        inputs_gradient = torch.zeros_like(inputs)
+
+        for i in range(k):
+            for j in range(k):
+                patch = inputs[:, i:i + s * H_out:s, j:j + s * W_out:s, :]
+                kernel_gradient[i, j] = torch.einsum("bhwc,bhwf->cf", patch, d_out)
+                kernel_slice = self._kernel[i, j]
+                grad_input_patch = d_out @ kernel_slice.T
+                inputs_gradient[:, i:i + s * H_out:s, j:j + s * W_out:s, :] += grad_input_patch
+        
         # If requested, verify that the three computed gradients are correct.
         if self._verify:
             with torch.enable_grad():

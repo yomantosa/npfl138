@@ -26,7 +26,16 @@ class Dataset(npfl138.TransformedDataset):
         image = image.to(torch.float32) / 255  # image converted to float32 and rescaled to [0, 1]
         label = example["label"]  # a torch.Tensor with a single integer representing the label
         return image, label  # return an (input, target) pair
-
+    
+# Subclass Ensemble
+class Ensemble(npfl138.TrainableModule):
+    def __init__(self, models: list[npfl138.TrainableModule]):
+        super().__init__()
+        self.models = models
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        predictions = torch.stack([torch.nn.functional.softmax(model(x), dim=1) for model in self.models], dim=0)
+        return predictions.mean(dim=0)
 
 def main(args: argparse.Namespace) -> tuple[list[float], list[float]]:
     # Set the random seed and the number of threads.
@@ -62,7 +71,7 @@ def main(args: argparse.Namespace) -> tuple[list[float], list[float]]:
     individual_accuracies, ensemble_accuracies = [], []
     for model in range(args.models):
         # TODO: Compute the accuracy on the dev set for the individual `models[model]`.
-        individual_accuracy = ...
+        individual_accuracy = models[model].evaluate(dev)["test_accuracy"]
 
         # TODO: Compute the accuracy on the dev set for the ensemble `models[0:model+1]`.
         #
@@ -75,9 +84,14 @@ def main(args: argparse.Namespace) -> tuple[list[float], list[float]]:
         #    need to construct the ensemble model at all; instead, call `model.predict`
         #    on the `dev` dataloader (with `data_with_labels=True` to indicate the dataloader
         #    also contains the labels) and average the predicted distributions. To measure
-        #    accuracy, either do it completely manually or use `torchmetrics.Accuracy`.
-        ensemble_accuracy = ...
-
+        #    accuracy, either do it completely manually or use `torchmetrics.Accuracy`. 
+        ensemble = Ensemble(models[:model+1])
+        ensemble.configure(
+            loss=torch.nn.CrossEntropyLoss(),
+            metrics={"accuracy": torchmetrics.Accuracy("multiclass", num_classes=MNIST.LABELS)}
+        )
+        ensemble_accuracy = ensemble.evaluate(dev)["test_accuracy"]
+        
         # Store the accuracies
         individual_accuracies.append(individual_accuracy)
         ensemble_accuracies.append(ensemble_accuracy)

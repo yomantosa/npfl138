@@ -64,13 +64,19 @@ class Model(npfl138.TrainableModule):
         # TODO: Create the model layers, with the last layer having 2 outputs.
         # To store a list of layers, you can use either `torch.nn.Sequential`
         # or `torch.nn.ModuleList`; you should *not* use a Python list.
-        ...
+        self.model = torch.nn.Sequential(
+            torch.nn.Linear(GymCartpoleDataset.FEATURES, 64),
+            # torch.nn.ReLU(),
+            # torch.nn.Linear(128, 64),
+            torch.nn.ReLU(),
+            torch.nn.Linear(64, 2)
+        )
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         # TODO: Run your model. Because some inputs are on a CPU, you should
         # start by moving them to the `self.device`.
-        ...
-
+        inputs = inputs.to(self.device)
+        return self.model(inputs)
 
 def main(args: argparse.Namespace) -> torch.nn.Module | None:
     # Set the random seed and the number of threads.
@@ -101,7 +107,13 @@ def main(args: argparse.Namespace) -> torch.nn.Module | None:
         model = Model(args)
 
         # TODO: Configure the model for training.
-        model.configure(...)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+        model.configure(
+            optimizer=optimizer,
+            loss=torch.nn.CrossEntropyLoss(),
+            metrics={"accuracy": torchmetrics.Accuracy("multiclass", num_classes=2)},
+            logdir=args.logdir,
+        )
 
         # TODO: Train the model. Note that you can pass a list of callbacks to the
         # `fit` method, each being a callable accepting the model, epoch, and logs.

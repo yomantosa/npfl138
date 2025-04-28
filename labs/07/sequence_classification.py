@@ -59,19 +59,37 @@ class Model(npfl138.TrainableModule):
 
         # TODO: The sequence will be processed using an RNN with type `args.rnn` (LSTM/GRU/RNN)
         # and with dimensionality `args.rnn_dim`.
-        ...
+        rnn_layer = {"LSTM": torch.nn.LSTM, "GRU": torch.nn.GRU, "RNN": torch.nn.RNN}[args.rnn]
+        self.rnn = rnn_layer(input_size=args.sequence_dim, hidden_size=args.rnn_dim,
+                             batch_first=True, bidirectional=False)
+
 
         # TODO: If `args.hidden_layer` is nonzero, the result of the RNN should be processed
         # by a fully connected layer with `args.hidden_layer` units and ReLU activation.
-        ...
+        if args.hidden_layer > 0:
+            self.hidden_layer = torch.nn.Sequential(
+                torch.nn.Linear(args.rnn_dim, args.hidden_layer),
+                torch.nn.ReLU()
+            )
+            rnn_output_dim = args.hidden_layer
+        else:
+            self.hidden_layer = None
+            rnn_output_dim = args.rnn_dim
 
         # TODO: The predictions are generated using a fully connected output layer
         # with one output and sigmoid activation.
-        ...
+        self.output = torch.nn.Sequential(
+            torch.nn.Linear(rnn_output_dim, 1),
+            torch.nn.Sigmoid()
+        )
+
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         # TODO: Process the input sequence through the RNN and the other layers.
-        ...
+        rnn_out, _ = self.rnn(inputs)
+        if self.hidden_layer is not None:
+            rnn_out = self.hidden_layer(rnn_out)
+        return self.output(rnn_out)
 
 
 def main(args: argparse.Namespace) -> dict[str, float]:
@@ -105,7 +123,7 @@ def main(args: argparse.Namespace) -> dict[str, float]:
         def gradient_clipping(optimizer, _args, _kwargs):
             # TODO: Implement gradient clipping using `torch.nn.utils.clip_grad_norm_`,
             # clipping the gradient if its L2 norm is larger than `args.clip_gradient`.
-            ...
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip_gradient)
         optimizer.register_step_pre_hook(gradient_clipping)
 
     model.configure(

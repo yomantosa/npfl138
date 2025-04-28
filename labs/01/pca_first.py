@@ -32,7 +32,9 @@ def main(args: argparse.Namespace) -> tuple[float, float]:
     # We want to reshape it to [args.examples, MNIST.C * MNIST.H * MNIST.W].
     # We can do so using `torch.reshape(data, new_shape)` with new shape
     # `[data.shape[0], data.shape[1] * data.shape[2] * data.shape[3]]`.
-    data = ...
+    
+    new_shape = data.shape[0], data.shape[1] * data.shape[2] * data.shape[3]
+    data = torch.reshape(data, new_shape)
 
     # TODO: Now compute mean of every feature. Use `torch.mean`, and set
     # `dim` (or `axis`) argument to zero -- therefore, the mean will be
@@ -40,30 +42,34 @@ def main(args: argparse.Namespace) -> tuple[float, float]:
     #
     # Note that for compatibility with Numpy/TF/Keras, all `dim` arguments
     # in PyTorch can be also called `axis`.
-    mean = ...
+    
+    mean = torch.mean(data, dim=0)
 
     # TODO: Compute the covariance matrix. The covariance matrix is
     #   (data - mean)^T @ (data - mean) / data.shape[0]
     # where transpose can be computed using `torch.transpose` or `torch.t` and
     # matrix multiplication using either Python operator @ or `torch.matmul`.
-    cov = ...
+    cov = ((data - mean).T @ (data - mean)/ data.shape[0] )
 
     # TODO: Compute the total variance, which is the sum of the diagonal
     # of the covariance matrix. To extract the diagonal use `torch.diagonal`,
     # and to sum a tensor use `torch.sum`.
-    total_variance = ...
+    total_variance = torch.sum(torch.diagonal(cov))
 
     # TODO: Now run `args.iterations` of the power iteration algorithm.
     # Start with a vector of `cov.shape[0]` ones of type `torch.float32` using `torch.ones`.
-    v = ...
+    v = torch.ones(cov.shape[0], dtype=torch.float32)
     for i in range(args.iterations):
         # TODO: In the power iteration algorithm, we compute
         # 1. v = cov v
         #    The matrix-vector multiplication can be computed as regular matrix multiplication
         #    or using `torch.mv`.
+        v = torch.mv(cov, v)
         # 2. s = l2_norm(v)
         #    The l2_norm can be computed using for example `torch.linalg.vector_norm`.
+        s = torch.linalg.vector_norm(v)
         # 3. v = v / s
+        v = v/s
         pass
 
     # The `v` is now approximately the eigenvector of the largest eigenvalue, `s`.
