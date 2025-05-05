@@ -11,20 +11,19 @@ import torchmetrics
 import npfl138
 npfl138.require_version("2425.9")
 from npfl138.datasets.morpho_dataset import MorphoDataset
+from npfl138.datasets.morpho_analyzer import MorphoAnalyzer
 
+# TODO: Define reasonable defaults and optionally more parameters.
+# Also, you can set the number of threads to 0 to use all your CPU cores.
 parser = argparse.ArgumentParser()
-# These arguments will be set appropriately by ReCodEx, even if you change them.
-parser.add_argument("--batch_size", default=10, type=int, help="Batch size.")
-parser.add_argument("--cle_dim", default=64, type=int, help="CLE embedding dimension.")
-parser.add_argument("--epochs", default=10, type=int, help="Number of epochs.")
-parser.add_argument("--max_sentences", default=None, type=int, help="Maximum number of sentences to load.")
-parser.add_argument("--recodex", default=False, action="store_true", help="Evaluation in ReCodEx.")
-parser.add_argument("--rnn_dim", default=64, type=int, help="RNN layer dimension.")
-parser.add_argument("--seed", default=41, type=int, help="Random seed.")
-parser.add_argument("--show_results_every_batch", default=10, type=int, help="Show results every given batch.")
-parser.add_argument("--tie_embeddings", default=False, action="store_true", help="Tie target embeddings.")
+parser.add_argument("--batch_size", default=32, type=int, help="Batch size.")
+parser.add_argument("--epochs", default=80, type=int, help="Number of epochs.")
+parser.add_argument("--seed", default=42, type=int, help="Random seed.")
 parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
-# If you add more arguments, ReCodEx will keep them with your default values.
+parser.add_argument("--cle_dim", default=64, type=int, help="CLE embedding dimension.")
+parser.add_argument("--rnn_dim", default=64, type=int, help="RNN layer dimension.")
+parser.add_argument("--tie_embeddings", default=False, action="store_true", help="Tie target embeddings.")
+parser.add_argument("--show_results_every_batch", default=10, type=int, help="Show results every given batch.")
 
 
 class WithAttention(torch.nn.Module):
@@ -257,14 +256,25 @@ class Model(npfl138.TrainableModule):
 
 
 class TrainableDataset(npfl138.TransformedDataset):
-    def __init__(self, dataset: MorphoDataset.Dataset, training: bool) -> None:
+    def __init__(self, dataset: MorphoDataset.Dataset, training: bool, analyses) -> None:
         super().__init__(dataset)
         self._training = training
+        self.analyses = analyses
+        
+    def fetch_analyses_features(self, word):
+        analysis = self.analyses.get(word)
+        if len(analysis) > 0:
+            return analysis[0].lemma
+        return ''
 
     def transform(self, example):
-        # TODO(lemmatizer_noattn): Return `example["words"]` as inputs and `example["lemmas"]` as targets.
+        # TODO: Return `example["words"]` as inputs and `example["lemmas"]` as targets.
         # raise NotImplementedError()
-        return example["words"], example["lemmas"]
+        words = example["words"]
+        lemmas = example["lemmas"]
+        combined_words_lemmas = [word + self.fetch_analyses_features(word) for word in words]
+        
+        return combined_words_lemmas, lemmas
 
 
     def collate(self, batch):
@@ -272,28 +282,27 @@ class TrainableDataset(npfl138.TransformedDataset):
         words, lemmas = zip(*batch)
         words = [word for sentence in words for word in sentence]
         lemmas = [lemma for sentence in lemmas for lemma in sentence]
-        # TODO(lemmatizer_noattn): The `words` are a list of list of strings. Flatten it into a single list of strings
+        # TODO: The `words` are a list of list of strings. Flatten it into a single list of strings
         # and then map the characters to their indices using the `self.dataset.words.char_vocab` vocabulary.
         # Then create a tensor by padding the words to the length of the longest one in the batch.
         word_indices = [torch.tensor(self.dataset.words.char_vocab.indices(word), dtype=torch.long) for word in words]
         words = torch.nn.utils.rnn.pad_sequence(word_indices, batch_first=True, padding_value=MorphoDataset.PAD)
         
-        # TODO(lemmatizer_noattn): Process `lemmas` analogously to `words`, but use `self.dataset.lemmas.char_vocab`,
+        # TODO: Process `lemmas` analogously to `words`, but use `self.dataset.lemmas.char_vocab`,
         # and additionally, append `MorphoDataset.EOW` to the end of each lemma.
         lemma_indices = [torch.cat([torch.tensor(self.dataset.lemmas.char_vocab.indices(lemma), dtype=torch.long),
                             torch.tensor([MorphoDataset.EOW], dtype=torch.long)]) for lemma in lemmas]
         lemmas = torch.nn.utils.rnn.pad_sequence(lemma_indices, batch_first=True, padding_value=MorphoDataset.PAD)
         
-        # TODO(lemmatizer_noattn): Return a pair (inputs, targets), where
+        # TODO: Return a pair (inputs, targets), where
         # - the inputs are words during inference and (words, lemmas) pair during training;
         # - the targets are lemmas.
         if self._training:
             return (words, lemmas), lemmas
         else:
             return words, lemmas
-
-
-def main(args: argparse.Namespace) -> dict[str, float]:
+        
+def main(args: argparse.Namespace) -> None:
     # Set the random seed and the number of threads.
     npfl138.startup(args.seed, args.threads)
     npfl138.global_keras_initializers()
@@ -305,33 +314,45 @@ def main(args: argparse.Namespace) -> dict[str, float]:
         ",".join(("{}={}".format(re.sub("(.)[^_]*_?", r"\1", k), v) for k, v in sorted(vars(args).items())))
     ))
 
-    # Load the data.
-    morpho = MorphoDataset("czech_cac", max_sentences=args.max_sentences)
+    # Load the data. Using analyses is only optional.
+    morpho = MorphoDataset("czech_pdt")
+    analyses = MorphoAnalyzer("czech_pdt_analyses")
 
-    # Prepare the data for training.
-    train = TrainableDataset(morpho.train, training=True).dataloader(batch_size=args.batch_size, shuffle=True)
-    dev = TrainableDataset(morpho.dev, training=False).dataloader(batch_size=args.batch_size)
+    # TODO: Create the model and train it.
+    train = TrainableDataset(morpho.train, training=True, analyses=analyses).dataloader(batch_size=args.batch_size, shuffle=True)
+    dev = TrainableDataset(morpho.dev, training=False, analyses=analyses).dataloader(batch_size=args.batch_size)
+    test = TrainableDataset(morpho.test, training=False, analyses=analyses).dataloader(batch_size=args.batch_size) 
 
     # Create the model and train.
     model = Model(args, morpho.train)
 
     model.configure(
-        # TODO(lemmatizer_noattn): Create the Adam optimizer.
+        # TODO: Create the Adam optimizer.
         optimizer=torch.optim.Adam(model.parameters()),
-        # TODO(lemmatizer_noattn): Use the usual `torch.nn.CrossEntropyLoss` loss function. Additionally,
+        # TODO: Use the usual `torch.nn.CrossEntropyLoss` loss function. Additionally,
         # pass `ignore_index=morpho.PAD` to the constructor so that the padded
         # tags are ignored during the loss computation.
-        loss=torch.nn.CrossEntropyLoss(ignore_index=morpho.PAD),
-        # TODO(lemmatizer_noattn): Create a `torchmetrics.MeanMetric()` metric, where we will manually
+        loss=torch.nn.CrossEntropyLoss(ignore_index=MorphoDataset.PAD),
+        # TODO: Create a `torchmetrics.MeanMetric()` metric, where we will manually
         # collect lemmatization accuracy.
         metrics={"accuracy": torchmetrics.MeanMetric()},
         logdir=args.logdir,
     )
 
-    logs = model.fit(train, dev=dev, epochs=args.epochs)
+    model.fit(train, dev=dev, epochs=args.epochs)
 
-    # Return all metrics for ReCodEx to validate.
-    return {metric: value for metric, value in logs.items()}
+    # Generate test set annotations, but in `args.logdir` to allow parallel execution.
+    os.makedirs(args.logdir, exist_ok=True)
+    with open(os.path.join(args.logdir, "lemmatizer_competition.txt"), "w", encoding="utf-8") as predictions_file:
+        # Predict the tags on the test set; update the following prediction
+        # command if you use a different output structure than in lemmatizer_noattn.
+        predictions = iter(model.predict(test, data_with_labels=True))
+
+        for sentence in morpho.test.words.strings:
+            for word in sentence:
+                lemma = next(predictions)
+                print("".join(morpho.test.lemmas.char_vocab.strings(lemma)), file=predictions_file)
+            print(file=predictions_file)
 
 
 if __name__ == "__main__":
