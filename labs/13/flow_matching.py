@@ -124,8 +124,9 @@ class UNet(torch.nn.Module):
     def __init__(self, channels: int, stage_blocks: int, stages: int) -> None:
         super().__init__()
         # TODO: When processing the input images and the input times, start by
-        # passing the times through the `SinusoidalEmbedding` layer; the result
-        # is then passed to all later layers that require the time embedding.
+        # passing the times through the `SinusoidalEmbedding` layer with
+        # dimension of `channels`; the result is then passed to all later layers
+        # that require the time embedding.
         #
         # The U-Net architecture consists of the following layers:
         # - the initial 3x3 convolution with `channels` channels, the "same"
@@ -183,7 +184,8 @@ class FlowMatching(npfl138.TrainableModule):
 
         # TODO: Perform a training step.
         # - Start by normalizing the input images using the `normalize_image` method.
-        # - Then compute the noisy images used as the model input.
+        # - Then compute the noisy images used as the model input, using the normalized
+        #   images, `noises`, and `times`.
         # - Follow by running the model to get the predicted vector field.
         # - Finally, compute the loss using the conditional flow matching objective,
         #   utilizing the given PyTorch loss stored in `self.loss`.
@@ -209,8 +211,9 @@ class FlowMatching(npfl138.TrainableModule):
         images = initial_noise.to(self.device)
         trajectory = []
 
-        # TODO: Perform the sampling process using the Euler method (the one described
-        # on the slides) and `steps` number of steps. You should compute:
+        # TODO: Perform the sampling process using the `self._ema_model` and the
+        # Euler method (the one described on the slides) and `steps` number of steps.
+        # You should compute:
         # - `images`, which are the final generated images, and
         # - `trajectory`, which is a list of the intermediate images x_0, x_{1/T}, ...,
         #   i.e., all the inputs you passed to the model during this method.
