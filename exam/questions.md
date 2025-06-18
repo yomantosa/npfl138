@@ -71,8 +71,8 @@
 - Describe the dropout method and write down exactly how it is used during training and
   during inference. [5]
 
-- Describe how label smoothing works for cross-entropy loss, both for sigmoid
-  and softmax activations. [5]
+- Describe how label smoothing works for both categorical cross-entropy loss and
+  for binary cross-entropy loss. [5]
 
 - How are weights and biases initialized using the Glorot initialization? [5]
 
@@ -87,8 +87,8 @@
   size of a convolutional operation with an $N \times M$ kernel on image
   of size $H \times W$ for both these padding schemes (stride is 1). [5]
 
-- Describe batch normalization including all its parameters, and write down an
-  algorithm how it is used during training and the algorithm how it is used
+- Describe BatchNorm (including its parameters and their size), and write down
+  an algorithm how it is used during training and the algorithm how it is used
   during inference. Be sure to explicitly write over what is being normalized in
   case of fully connected layers and in case of convolutional layers. [10]
 
@@ -112,7 +112,7 @@
 
 - Compare Cutout and DropBlock. [5]
 
-- Describe in detail how is CutMix performed. [5]
+- Describe in detail how CutMix is performed. [5]
 
 - Describe Squeeze and Excitation applied to a ResNet block. [5]
 
@@ -125,19 +125,53 @@
   channels. Write down (or derive) the equation of transposed convolution
   (or equivalently backpropagation through a convolution to its inputs). [5]
 
+#### Questions@:, Lecture 6 Questions
+- Describe the differences among semantic segmentation, image classification,
+  object detection, and instance segmentation, and write down which metrics
+  are used for these tasks. [5]
+
+- Write down how $\mathit{AP}_{50}$ is computed given predicted objects
+  and their bounding boxes in the whole dataset. [5]
+
+- Considering a Fast-RCNN architecture, draw overall network architecture,
+  explain what a RoI-pooling layer is, show how the network parametrizes
+  bounding boxes and write down the complete loss. Finally, describe non-maximum
+  suppression and how the Fast-RCNN prediction is performed. [10]
+
+- Considering a Faster-RCNN architecture, describe the region proposal network
+  (what are anchors, architecture including both heads, how are the coordinates
+  of proposals parametrized, what does the complete loss look like). [10]
+
+- Considering Mask-RCNN architecture, describe the additions to a Faster-RCNN
+  architecture (the RoI-Align layer, the new mask-producing head, its loss). [5]
+
+- Write down the focal loss with class weighting, including the commonly used
+  hyperparameter values and how the class weighting works for a given class. [5]
+
+- Draw the overall architecture of a RetinaNet architecture (the computation of
+  $C_1, \ldots, C_7$, the FPN architecture computing $P_1, \ldots, P_7$
+  including the block combining feature maps of different resolutions; the
+  classification and bounding box generation heads, including their output
+  size). Write down the losses for both heads and the overall loss. [10]
+
+- Describe GroupNorm (including its parameters and their size), and compare it
+  to BatchNorm and LayerNorm, discussing both fully connected layers and
+  convolutional layers. [5]
+
 #### Questions@:, Lecture 7 Questions
 - Write down how the Long Short-Term Memory (LSTM) cell operates, including
   the explicit formulas. Also mention the forget gate bias. [10]
 
-- Write down how the Gated Recurrent Unit (GRU) operates, including
-  the explicit formulas. [10]
+- Write down how the Gated Recurrent Unit (GRU) operates, including the explicit
+  formulas (you can describe either the original formulation or the reset gate
+  applied after the matrix multiplication, both are fine). [10]
 
-- Why the usual dropout cannot be used on recurrent state? Describe
+- Why the usual dropout should not be used on recurrent state? Describe
   how the problem can be alleviated with variational dropout. [5]
 
-- Describe layer normalization including all its parameters, and write down how
-  it is computed (be sure to explicitly state over what is being normalized in
-  case of fully connected layers and convolutional layers). [5]
+- Describe LayerNorm (including its parameters and their size), and write down
+  how it is computed (be sure to explicitly state over what is being normalized
+  in case of fully connected layers and convolutional layers). [5]
 
 - Draw a tagger architecture utilizing word embeddings, recurrent
   character-level word embeddings (including how are these computed from
@@ -160,18 +194,18 @@
 
 - Draw the CBOW architecture from `word2vec`, including the sizes of the inputs
   and the sizes of the outputs and used non-linearities. Also make sure to
-  indicate where the embeddings are being trained. [5]
+  explain how to obtain the final embeddings after training. [5]
 
 - Draw the SkipGram architecture from `word2vec`, including the sizes of the
   inputs and the sizes of the outputs and used non-linearities. Also make sure
-  to indicate where the embeddings are being trained. [5]
+  to explain how to obtain the final embeddings after training. [5]
 
 - Describe the hierarchical softmax used in `word2vec`. [5]
 
 - Describe the negative sampling proposed in `word2vec`, including
   the choice of distribution of negative samples. [5]
 
-- Explain how are ELMo embeddings trained and how are they used in downstream
+- Explain how ELMo embeddings are trained and how they are used in downstream
   applications. [5]
 
 #### Questions@:, Lecture 9 Questions
@@ -183,15 +217,15 @@
 - Considering machine translation, draw a recurrent sequence-to-sequence
   architecture with attention, used during training (include embedding layers,
   recurrent cells, attention, classification layers).
-  Then write down how exactly is the attention computed. [10]
+  Then write down how exactly the attention is computed. [10]
 
-- Explain how is word embeddings tying used in a sequence-to-sequence
+- Explain how word embeddings tying is used in a sequence-to-sequence
   architecture, including the necessary scaling. [5]
 
-- Write down why are subword units used in text processing, and describe the BPE
+- Write down why subword units are used in text processing, and describe the BPE
   algorithm for constructing a subword dictionary from a large corpus. [5]
 
-- Write down why are subword units used in text processing, and describe the
+- Write down why subword units are used in text processing, and describe the
   WordPieces algorithm for constructing a subword dictionary from a large
   corpus. [5]
 
@@ -223,25 +257,25 @@
   self-attention operation). Elaborate also on which positional embeddings
   are used and what are the GELU activations. [10]
 
-- Describe the GELU activations and explain why are they a combination of ReLUs
+- Describe the GELU activations and explain why they are a combination of ReLUs
   and Dropout. [5]
 
 - Elaborate on BERT training process (what are the two objectives used and how
-  exactly are the corresponding losses computed). [10]
+  exactly the corresponding losses are computed). [10]
 
-- Describe the architecture of a Vision Transformer – how are input images
-  represented, draw the Transformer encoder layer and the FFN sublayer, how is
-  the distribution over predicted classes computed, what positional embeddings
+- Describe the architecture of a Vision Transformer – how input images
+  are represented, draw the Transformer encoder layer and the FFN sublayer, how
+  the distribution over predicted classes is computed, what positional embeddings
   are used (and what alternative positional embeddings were tried). [10]
 
 #### Questions@:, Lecture 11 Questions
 - Define the Markov Decision Process, including the definition of the return. [5]
 
-- Define the value function, such that all expectations are over simple random
-  variables (actions, states, rewards), not trajectories. [5]
+- Define the value function such that all expectations are over simple random
+  variables (actions, states, rewards), not whole episodes. [5]
 
-- Define the action-value function, such that all expectations are over simple
-  random variables (actions, states, rewards), not trajectories. [5]
+- Define the action-value function such that all expectations are over simple
+  random variables (actions, states, rewards), not whole episodes. [5]
 
 - Express the value function using the action-value function, and express the
   action-value function using the value function. [5]
@@ -294,23 +328,64 @@
 - Illustrate that alternating SGD steps are not guaranteed to converge for
   a min-max problem. [5]
 
-Flow Matching questions will be added later.
+- In flow matching, correctly define the probability density path, the
+  time-dependent vector field, the flow, and write down the transport equation
+  connecting these concepts. [5]
+
+- In conditional flow matching, write down how we design the conditional
+  probability path in time 0 and in time 1, define the marginal probability
+  path, explain what the conditional vector field is, define the marginal vector
+  field, and using the transport equation prove that the marginal vector field
+  generates the marginal probability path. [10]
+
+- Write down the general flow matching objective and the general conditional
+  flow matching objective. [5]
+
+- In conditional flow matching, assuming that the conditional probability path
+  is defined as a parametric normal distribution, write down how it is defined
+  in time 0 and in time 1, how the corresponding flow looks like in time $t$,
+  and derive the formula for the conditional vector field generating such
+  a flow. [10]
+
+- Write down the definition of the optimal transport (OT) flow in time $t$, the
+  corresponding conditional probability path, and the conditional vector field
+  generating this flow. Then, write down how exactly the conditional flow
+  matching loss looks like for this optimal transport flow. [10]
+
+- Write down the sampling algorithm used in flow matching. [5]
 
 #### Questions@:, Lecture 14 Questions
+- Describe how a linear-frequency spectrogram is generated (explain window
+  length, hop length, what frequencies are represented in every window,
+  and explain windowing including the Hann window function). Assuming $f$
+  hertz corresponds to $m(f)$ mels (no need to know the exact formula),
+  how do the hertz frequencies represented by a mel spectrogram with
+  $M$ entries look like? [10]
+
 - Draw the WaveNet architecture (show the overall architecture, explain dilated
   convolutions, write down the gated activations, describe global and local
   conditioning). [10]
 
+- Write down the formulas for GELU, Swish, GEGLU, and SwiGLU used in the FFN
+  module of a Transformer architecture. [5]
+
 - Define the Mixture of Logistic distribution used in Parallel WaveNet,
   including the explicit formula of computing the likelihood of the data. [5]
 
-- Describe the changes in the Student model of Parallel WaveNet, which allow
-  efficient sampling (how the latent prior looks like, how the output
-  data distribution is modeled in a single iteration, how is every iteration
-  computed). [5]
+- Describe the changes in the Student model of Parallel WaveNet that allow
+  efficient sampling (how the distribution $P(x_t)$ looks like, how $x_t$
+  is sampled from this distribution, what the prior distribution for latent
+  variable looks like, how the second iteration is computed). [10]
 
-- Write down the loss used for training of the Student model in Parallel
-  WaveNet, then rewrite the cross-entropy part to a sum of per-time-step
-  cross-entropies. [10]
+- Write down the loss used for Student model training in Parallel WaveNet, and
+  write down the cross-entropy part also using per-time-step cross-entropies. [5]
 
-More TTS questions will be added later.
+- Describe the overall architecture of the Tacotron 2 architecture, including
+  the description of the encoder, formula for the location-sensitive attention,
+  and the description of the decoder. (How exactly is one step of the decoder
+  performed? How exactly is post-net used? Why does the decoder have two outputs?)
+  What is the loss minimized during training? [10]
+
+- Sketch the FastSpeech architecture, and describe what duration predictor
+  is and how it is used during computation. What is the advantage of this
+  architecture compared to Tacotron? [5]
