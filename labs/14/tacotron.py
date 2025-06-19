@@ -55,11 +55,47 @@ class Encoder(torch.nn.Module):
         #   forward and backward direction should be summed together.
         # - Pass the result through another `torch.nn.Dropout(args.dropout)` layer and return it.
         # It does not matter if you use a shared single dropout layer or invididual independent dropout layers.
-        raise NotImplementedError()
+        # raise NotImplementedError()
+        self.embedding = torch.nn.Embedding(num_characters, args.encoder_dim)
+        self.drop1 = torch.nn.Dropout(args.dropout)
+
+        # Build CNN stack
+        self.cnn_blocks = torch.nn.ModuleList([
+            torch.nn.Sequential(
+                torch.nn.Conv1d(args.encoder_dim, args.encoder_dim, kernel_size=5, padding=2, bias=False),
+                torch.nn.BatchNorm1d(args.encoder_dim),
+                torch.nn.ReLU()
+            )
+            for _ in range(args.encoder_layers)
+        ])
+
+        # Bidirectional LSTM
+        self.bi_lstm = torch.nn.LSTM(
+            args.encoder_dim, args.encoder_dim,
+            num_layers=1, bidirectional=True, batch_first=True
+        )
+        self.drop2 = torch.nn.Dropout(args.dropout)
 
     def forward(self, texts: torch.Tensor) -> torch.Tensor:
         # TODO: Implement the forward pass of the encoder.
-        result = ...
+        hidden = self.embedding(texts)
+        hidden = self.drop1(hidden)
+
+        hidden = hidden.transpose(1, 2)
+        for block in self.cnn_blocks:
+            hidden = block(hidden)
+        hidden = hidden.transpose(1, 2)
+        hidden = self.drop2(hidden)
+
+        lengths = (texts != TTSDataset.PAD).sum(dim=1).cpu()
+        packed = torch.nn.utils.rnn.pack_padded_sequence(hidden, lengths,
+                                                         batch_first=True, enforce_sorted=False)
+        packed_out, _ = self.bi_lstm(packed)
+        lstm_out, _ = torch.nn.utils.rnn.pad_packed_sequence(packed_out, batch_first=True)
+
+        feat_dim = self.bi_lstm.hidden_size
+        summed = lstm_out[:, :, :feat_dim] + lstm_out[:, :, feat_dim:]
+        result = self.drop2(summed)
 
         if npfl138.first_time("Encoder.forward"):
             print(f"The torch.std of the first batch returned by Encoder: {torch.std(result):.4f}")
@@ -95,7 +131,25 @@ class Attention(torch.nn.Module):
         #   - the previously-computed attention weights,
         #   - the cummulative attention weights (the sum of all computed attention weights so far),
         #   - the previously-computed attention context vector (the previous attention output).
-        raise NotImplementedError()
+        # raise NotImplementedError()
+        self.enc_seq = encoded_text
+        self.proc_mem = self.attention_memory_layer(encoded_text)
+        mask = torch.where(
+            text == TTSDataset.PAD,
+            torch.tensor(-1e9, device=text.device),
+            torch.tensor(0.0, device=text.device))
+        self.mask = mask
+
+        batch_size, seq_len, _ = encoded_text.size()
+        dev = text.device
+        h0 = torch.zeros(batch_size, self.attention_rnn.hidden_size, device=dev)
+        c0 = torch.zeros(batch_size, self.attention_rnn.hidden_size, device=dev)
+
+        self.att_h = h0
+        self.att_c = c0
+        self.prev_weights = torch.zeros(batch_size, seq_len, device=dev)
+        self.cum_weights = torch.zeros(batch_size, seq_len, device=dev)
+        self.prev_context = torch.zeros(batch_size, encoded_text.size(-1), device=dev)
 
     def forward(self, prenet: torch.Tensor) -> torch.Tensor:
         # TODO: Implement a single step of the attention mechanism, relying on the previously-computed
@@ -122,7 +176,22 @@ class Attention(torch.nn.Module):
         # - the updated cummulative attention weights (the sum of all computed attention weights so far),
         # - the current attention weights, which become the previous attention weights in the next step,
         # - the current attention context vector, which becomes the previous context in the next step.
-        context = ...
+        
+        inp = torch.cat([prenet, self.prev_context], dim=-1)
+        self.att_h, self.att_c = self.attention_rnn(inp, (self.att_h, self.att_c))
+        loc = torch.stack([self.cum_weights, self.prev_weights], dim=1)
+        loc = self.location_sensitive_conv(loc).transpose(1, 2)
+        loc = self.location_sensitive_output(loc)
+        qry = self.attention_query_layer(self.att_h).unsqueeze(1)
+        scores = self.attention_output_layer(torch.tanh(qry + self.proc_mem + loc)).squeeze(-1)
+        scores = scores + self.mask
+
+        weights = torch.softmax(scores, dim=-1)
+        self.prev_weights = weights
+        self.cum_weights += weights
+
+        context = torch.sum(weights.unsqueeze(-1) * self.enc_seq, dim=1)
+        self.prev_context = context
 
         if npfl138.first_time("Attention.forward"):
             print(f"The torch.std of the first batch returned by Attention: {torch.std(context):.4f}")
@@ -138,7 +207,16 @@ class Decoder(torch.nn.Module):
         # - a linear layer with `args.prenet_dim` output dimension,
         # - ReLU activation,
         # - dropout with `args.dropout` rate.
-        self.prenet = ...
+        layers = []
+        for i in range(args.prenet_layers):
+            in_dim = args.mels if i == 0 else args.prenet_dim
+            layers.extend([
+                torch.nn.Linear(in_dim, args.prenet_dim),
+                torch.nn.ReLU(),
+                torch.nn.Dropout(args.dropout)
+            ])
+        self.prenet = torch.nn.Sequential(*layers)
+
 
         # The LSTM decoder cell is already prepared for you.
         self.decoder = torch.nn.LSTMCell(args.prenet_dim + args.encoder_dim, args.decoder_dim)
@@ -148,18 +226,24 @@ class Decoder(torch.nn.Module):
 
         # TODO: Create the output layer with no activation that maps decoder states
         # to mel spectrograms with `args.mels` output channels.
-        self.output_layer = ...
+        self.output_layer = torch.nn.Linear(args.decoder_dim, args.mels)
 
         # TODO: Create the gate layer that maps the decoder states to a single value predicting
         # whether this step of the decoder should be the last one.
-        self.gate_layer = ...
+        self.gate_layer = torch.nn.Linear(args.decoder_dim, 1)
 
     def reset(self, texts: torch.Tensor) -> None:
         # TODO: Similarly to the `Attention.reset`, the `reset` method initializes the decoder
         # for a new batch of texts. You should
         # - store properly tiled (repeated) `self.decoder_start` as the next input to the decoder,
         # - zero-initialize the decoder state (`h`) and memory cell (`c`) of the `self.decoder`.
-        raise NotImplementedError()
+        # raise NotImplementedError()
+        bsz = texts.size(0)
+        self.next_in = self.decoder_start.unsqueeze(0).expand(bsz, -1).to(texts.device)
+        h0 = torch.zeros(bsz, self.decoder.hidden_size, device=texts.device)
+        c0 = torch.zeros(bsz, self.decoder.hidden_size, device=texts.device)
+        self.dec_h = h0
+        self.dec_c = c0
 
     def forward(self, context: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         # TODO: Implement a single step of the decoder.
@@ -173,14 +257,19 @@ class Decoder(torch.nn.Module):
         # - Finally, pass the decoder RNN state through the `self.gate_layer` and a sigmoid activation
         #   to obtain the gate output indicating whether the decoder should stop or continue.
         # Return the output mel spectrogram frame and the gate output.
-        mel_frame, gate = ...
+        inp = torch.cat([self.next_in, context], dim=-1)
+        self.dec_h, self.dec_c = self.decoder(inp, (self.dec_h, self.dec_c))
+
+        mel_frame = self.output_layer(self.dec_h)
+        gate = torch.sigmoid(self.gate_layer(self.dec_h))
+
+        self.next_in = self.prenet(mel_frame)
 
         if npfl138.first_time("Decoder.forward"):
             print("The torch.std of the first batch returned by Decoder:",
                   f"({torch.std(mel_frame):.4f}, {torch.std(gate):.4f})")
 
         return mel_frame, gate
-
 
 class Postnet(torch.nn.Module):
     def __init__(self, args: argparse.Namespace) -> None:
@@ -192,7 +281,21 @@ class Postnet(torch.nn.Module):
         #   - the tanh activation.
         # - The last layer consists of a 1D convolution with the same hyperparameters, but with `args.mels`
         #   output channels, followed by a batch normalization; no activation is applied.
-        raise NotImplementedError()
+        # raise NotImplementedError()
+        self.blocks = torch.nn.ModuleList()
+
+        if args.postnet_layers == 1:
+            conv = torch.nn.Conv1d(args.mels, args.mels, kernel_size=5, padding=2, bias=False)
+            self.blocks.append(torch.nn.Sequential(conv, torch.nn.BatchNorm1d(args.mels)))
+        else:
+            for i in range(args.postnet_layers - 1):
+                in_ch = args.mels if i == 0 else args.postnet_dim
+                conv = torch.nn.Conv1d(in_ch, args.postnet_dim, kernel_size=5, padding=2, bias=False)
+                self.blocks.append(torch.nn.Sequential(conv, torch.nn.BatchNorm1d(args.postnet_dim), torch.nn.Tanh()))
+                
+            conv = torch.nn.Conv1d(args.postnet_dim, args.mels, kernel_size=5, padding=2, bias=False)
+            self.blocks.append(torch.nn.Sequential(conv, torch.nn.BatchNorm1d(args.mels)))
+
 
     def forward(self, spectrograms: torch.Tensor) -> torch.Tensor:
         # TODO: Given a batch of mel spectrograms with shape `[batch_size, max_spectrogram_len, mels]`,
@@ -200,7 +303,11 @@ class Postnet(torch.nn.Module):
         # - pass the spectrograms through the post-net,
         # - move the channels back to the last dimension.
         # Finally, return the sum of the original and processed spectrograms.
-        result = ...
+        hidden = spectrograms.transpose(1, 2)
+        for blk in self.blocks:
+            hidden = blk(hidden)
+        hidden = hidden.transpose(1, 2)
+        result = spectrograms + hidden
 
         if npfl138.first_time("Postnet.forward"):
             print(f"The torch.std of the first batch returned by Postnet: {torch.std(result):.4f}")
@@ -212,39 +319,42 @@ class Tacotron(npfl138.TrainableModule):
     def __init__(self, args: argparse.Namespace, num_characters: int) -> None:
         super().__init__()
         # TODO: Create the Tacotron 2 model consisting of the encoder, attention, decoder, and post-net modules.
-        self.encoder = ...
-        self.attention = ...
-        self.decoder = ...
-        self.postnet = ...
+        self.encoder = Encoder(args, num_characters)
+        self.attention = Attention(args)
+        self.decoder = Decoder(args)
+        self.postnet = Postnet(args)
+        self.args = args
 
     def forward(self, texts: torch.Tensor, spectrograms_len: torch.Tensor) -> torch.Tensor:
         # TODO: Start by encoding the texts using the encoder.
-        encoded_texts = ...
+        encoded_texts = self.encoder(texts)
 
         # TODO: Then, reset the attention and decoder modules using the `reset` method with
         # appropriate arguments.
-        self.attention.reset(...)
-        self.decoder.reset(...)
+        self.attention.reset(texts, encoded_texts)
+        self.decoder.reset(texts)
 
         # Now, compute the sequence of mel spectrogram frames and the gate outputs.
         mel_frames, gates = [], []
         for _ in range(spectrograms_len):
             # TODO: Run the `self.attention` module on the current decoder input (which
             # is stored somewhere in the `self.decoder` instance) to obtain the context vector.
-            context = ...
+            context = self.attention(self.decoder.next_in)
 
             # TODO: Then run the `self.decoder` module on the obtained context vector.
-            mel_frame, gate = ...
+            mel_frame, gate = self.decoder(context)
 
             # TODO: Append the obtained mel frame and gate output to the `mel_frames` and `gates` lists.
-            ...
+            mel_frames.append(mel_frame)
+            gates.append(gate)
 
         # TODO: Stack the `mel_frames` and `gates` lists into tensors; the first two dimensions of
         # the resulting tensors should be `[batch_size, max_spectrogram_len]`.
-        ...
+        mel_frames = torch.stack(mel_frames, dim=1)
+        gates = torch.stack(gates, dim=1)
 
         # TODO: Finally, pass the `mel_frames` through the post-net.
-        ...
+        mel_frames = self.postnet(mel_frames)
 
         return mel_frames, gates
 
@@ -256,13 +366,28 @@ class Tacotron(npfl138.TrainableModule):
 
         # TODO: We need to ignore padding values during loss computation; therefore, use
         # `torch.masked_select` to select only the non-padding values from predicted and true values.
+        max_frames = mel_frames.size(1)
+        frame_idx = torch.arange(max_frames, device=mel_frames.device)[None, :]
+        valid_mask = (frame_idx < spectrogram_lens[:, None]).unsqueeze(-1)
+
+        mel_pred_vals = torch.masked_select(mel_frames, valid_mask)
+        mel_true_vals = torch.masked_select(spectrograms[:, :max_frames], valid_mask)
+        mse_loss = torch.nn.functional.mse_loss(mel_pred_vals, mel_true_vals)
+
 
         # TODO: The loss is a sum of the following two terms:
         # - the mean squared error between the predicted `mel_frames` and true `spectrograms`,
         # - the binary cross-entropy between the predicted `gates` and true values derived
         #   from `spectrogram_lens`. As an example, if a spectrogram has length 3, the gates should
         #   be 0 for the first frame and second frame, and 1 for the third frame.
-        mse_loss, bce_loss = ...
+        gate_targets = torch.zeros_like(gates)
+        for i, L in enumerate(spectrogram_lens):
+            if 0 < L <= gate_targets.size(1):
+                gate_targets[i, L-1] = 1.0
+
+        gate_pred_vals = torch.masked_select(gates, valid_mask)
+        gate_true_vals = torch.masked_select(gate_targets, valid_mask)
+        bce_loss = torch.nn.functional.binary_cross_entropy(gate_pred_vals, gate_true_vals)
 
         if npfl138.first_time("Tacotron.compute_loss"):
             print(f"The first batch loss values: (mse={mse_loss:.4f}, bce={bce_loss:.4f})")
@@ -277,7 +402,13 @@ class TrainableDataset(npfl138.TransformedDataset):
         # TODO: Prepare a single example for training, returning a pair consisting of:
         # - the text converted to a sequence of character indices according to `self.dataset.char_vocab`,
         # - the unmodified mel spectrogram.
-        raise NotImplementedError()
+        # raise NotImplementedError()
+        text_ids = torch.tensor(
+            [self.dataset.char_vocab.index(ch) for ch in example["text"]],
+            dtype=torch.long
+        )
+        mel_spec = torch.tensor(example["mel_spectrogram"], dtype=torch.float32)
+        return text_ids, mel_spec
 
     def collate(self, batch: list) -> tuple[tuple[torch.Tensor, torch.Tensor], tuple[torch.Tensor, torch.Tensor]]:
         text_ids, spectrograms = zip(*batch)
@@ -286,9 +417,23 @@ class TrainableDataset(npfl138.TransformedDataset):
         #   using `TTSDataset.PAD` (which is guaranteed to be 0) as the padding value.
         # - The lengths of the unpadded spectrograms should be stored in a tensor `spectrogram_lens`.
         # - Finally, the `spectrograms` should also be padded to a common minimal length.
-        padded_text_ids = ...
-        spectrogram_lens = ...
-        padded_spectrograms = ...
+        padded_text_ids = torch.nn.utils.rnn.pad_sequence(
+            text_ids,
+            batch_first=True,
+            padding_value=TTSDataset.PAD
+        )
+        
+        spectrogram_lens = torch.tensor(
+            [m.size(0) for m in spectrograms],
+            dtype=torch.long
+        )        
+        
+    
+        max_len = int(spectrogram_lens.max())
+        n_mels = spectrograms[0].size(1)
+        padded_spectrograms = torch.zeros(len(spectrograms), max_len, n_mels)
+        for i, m in enumerate(spectrograms):
+            padded_spectrograms[i, : m.size(0)] = m
 
         # As input, apart from text ids, we return the maximum spectrogram length to indicate
         # how many mel frames to produce during training. During inference, this value will be
